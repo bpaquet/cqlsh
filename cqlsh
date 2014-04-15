@@ -162,6 +162,7 @@ parser.add_option("-u", "--username", help="Authenticate as user.")
 parser.add_option("-p", "--password", help="Authenticate using password.")
 parser.add_option('-k', '--keyspace', help='Authenticate to the given keyspace.')
 parser.add_option("-f", "--file", help="Execute commands from FILE, then exit")
+parser.add_option("--fail_on_error", help="Fail on CQL error", action='store_true', dest='fail_on_error')
 parser.add_option("-t", "--transport-factory",
                   help="Use the provided Thrift transport factory function.")
 parser.add_option('--debug', action='store_true',
@@ -354,6 +355,9 @@ def complete_copy_opt_values(ctxt, cqlsh):
         return ['true', 'false']
     return [cqlhandling.Hint('<single_character_string>')]
 
+class ExecutionError(Exception):
+    pass
+
 class NoKeyspaceError(Exception):
     pass
 
@@ -462,7 +466,7 @@ class Shell(cmd.Cmd):
                  cqlver=DEFAULT_CQLVER, keyspace=None,
                  tracing_enabled=False, expand_enabled=False,
                  display_time_format=DEFAULT_TIME_FORMAT,
-                 display_float_precision=DEFAULT_FLOAT_PRECISION):
+                 display_float_precision=DEFAULT_FLOAT_PRECISION, fail_on_error=False):
         cmd.Cmd.__init__(self, completekey=completekey)
         self.hostname = hostname
         self.port = port
@@ -470,6 +474,7 @@ class Shell(cmd.Cmd):
         self.username = username
         self.password = password
         self.keyspace = keyspace
+        self.fail_on_error = fail_on_error
         self.tracing_enabled = tracing_enabled
         self.expand_enabled = expand_enabled
         if use_conn is not None:
@@ -910,13 +915,19 @@ class Shell(cmd.Cmd):
                 time.sleep(1*trynum)
             except cql.ProgrammingError, err:
                 self.printerr(str(err))
+                if self.fail_on_error:
+                    sys.exit(2)
                 return False
             except CQL_ERRORS, err:
                 self.printerr(str(err))
+                if self.fail_on_error:
+                    sys.exit(2)
                 return False
             except Exception, err:
                 import traceback
                 self.printerr(traceback.format_exc())
+                if self.fail_on_error:
+                    sys.exit(2)
                 return False
 
         if statement[:6].lower() == 'select' or statement.lower().startswith("list"):
@@ -1922,6 +1933,7 @@ def read_options(cmdlineargs, environment):
                                                     DEFAULT_TIME_FORMAT)
     optvalues.float_precision = option_with_default(configs.getint, 'ui', 'float_precision',
                                                     DEFAULT_FLOAT_PRECISION)
+    optvalues.fail_on_error = option_with_default(configs.getboolean, 'fail_on_error', 'fail_on_error')
     optvalues.debug = False
     optvalues.file = None
     optvalues.tty = sys.stdin.isatty()
@@ -2027,7 +2039,8 @@ def main(options, hostname, port):
                       cqlver=options.cqlversion,
                       keyspace=options.keyspace,
                       display_time_format=options.time_format,
-                      display_float_precision=options.float_precision)
+                      display_float_precision=options.float_precision,
+                      fail_on_error=options.fail_on_error)
     except KeyboardInterrupt:
         sys.exit('Connection aborted.')
     except CQL_ERRORS, e:
